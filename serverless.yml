@@ -28,6 +28,6 @@ functions:
 
 custom:
   pythonRequirements:
-    dockerizePip: true  # NECESARIO para Python 3.12 en Lambda
-    slim: true
+    dockerizePip: false     # ← DESACTIVADO
+    slim: false             # más seguro sin slim
     strip: false
