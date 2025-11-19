@@ -30,8 +30,10 @@ functions:
 custom:
   pythonRequirements:
     fileName: requirements.txt
-    dockerizePip: true
-    slim: true
+    dockerizePip: false   # 👈 SOLUCIÓN
+    usePoetry: false
+    useDownloadCache: false
+    useStaticCache: false
 
 resources:
   Resources:
