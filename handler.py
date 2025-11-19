@@ -57,13 +57,23 @@ def unir_fecha_hora(fecha_str, hora_str):
         return fecha.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 def convert_item_to_decimal(item):
-    """Convierte floats e ints a Decimal recursivamente"""
+    """Convierte floats, ints y strings numéricos a Decimal para DynamoDB."""
     if isinstance(item, list):
         return [convert_item_to_decimal(i) for i in item]
     elif isinstance(item, dict):
-        return {k: convert_item_to_decimal(v) for k, v in item.items()}
-    elif isinstance(item, float) or isinstance(item, int):
-        return Decimal(str(item))
+        out = {}
+        for k, v in item.items():
+            if isinstance(v, (float, int)):
+                out[k] = Decimal(str(v))
+            elif isinstance(v, str):
+                # si es un número en string, convertir a Decimal
+                try:
+                    out[k] = Decimal(v)
+                except:
+                    out[k] = v
+            else:
+                out[k] = convert_item_to_decimal(v)
+        return out
     else:
         return item
 
@@ -202,3 +212,4 @@ def lambda_handler(event, context):
     except Exception as e:
         error_log("Excepción no manejada:", e)
         return http_error(f"Error inesperado: {e}")
+
