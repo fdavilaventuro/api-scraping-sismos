@@ -1,5 +1,5 @@
-service: igp-sismos-scraper
 org: fabioedv
+service: igp-sismos-scraper
 
 provider:
   name: aws
@@ -14,7 +14,6 @@ provider:
 
   environment:
     TABLE_NAME: TablaWebScrapingSismos
-    AWS_REGION: ${self:provider.region}
     START_YEAR: 2025
     END_YEAR: 2025
 
