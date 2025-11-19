@@ -1,0 +1,39 @@
+service: igp-sismos-scraper
+org: fabioedv
+
+frameworkVersion: '3'
+
+provider:
+  name: aws
+  runtime: python3.12
+  region: us-east-1
+  stage: dev
+  memorySize: 1024
+  timeout: 20
+
+  iam:
+    role: arn:aws:iam::282163831899:role/LabRole
+
+  environment:
+    TABLE_NAME: TablaWebScrapingSismos
+    AWS_REGION: ${self:provider.region}
+    START_YEAR: 2025
+    END_YEAR: 2025
+
+functions:
+  scraper:
+    handler: handler.lambda_handler
+    events:
+      - http:
+          path: scrape
+          method: post
+          cors: true
+
+plugins:
+  - serverless-python-requirements
+
+custom:
+  pythonRequirements:
+    pythonBin: python3
+    slim: true
+    strip: false
