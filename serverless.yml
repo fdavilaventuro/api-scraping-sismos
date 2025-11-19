@@ -1,5 +1,7 @@
-org: fabioedv
 service: igp-sismos-scraper
+org: fabioedv
+
+frameworkVersion: '4'
 
 provider:
   name: aws
@@ -9,6 +11,7 @@ provider:
   memorySize: 1024
   timeout: 20
 
+  # Usamos el rol Laboratorio
   iam:
     role: arn:aws:iam::282163831899:role/LabRole
 
@@ -20,11 +23,19 @@ provider:
 functions:
   scraper:
     handler: handler.lambda_handler
-    package:
-      include:
-        - ./**
     events:
       - http:
           path: scrape
           method: post
           cors: true
+
+plugins:
+  - serverless-python-requirements
+
+custom:
+  pythonRequirements:
+    pythonBin: python3
+    dockerizePip: true   # NECESARIO para Python 3.12 en Lambda
+    usePoetry: false
+    slim: true
+    strip: false
