@@ -8,7 +8,7 @@ from decimal import Decimal
 
 # Config
 TABLE_NAME = os.environ.get("TABLE_NAME", "TablaWebScrapping")
-AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
+AWS_REGION = "us-east-1"
 DEFAULT_START_YEAR = int(os.environ.get("START_YEAR", "2025"))
 DEFAULT_END_YEAR = int(os.environ.get("END_YEAR", str(DEFAULT_START_YEAR)))
 
@@ -195,3 +195,4 @@ def lambda_handler(event, context):
         return {"statusCode": 500, "body": f"Error al insertar en DynamoDB: {e}"}
 
     return {"statusCode": 200, "body": resumen}
+
