@@ -1,5 +1,5 @@
-# handler.py
 import os
+import json
 import requests
 import boto3
 import uuid
@@ -15,184 +15,236 @@ DEFAULT_END_YEAR = int(os.environ.get("END_YEAR", str(DEFAULT_START_YEAR)))
 dynamodb = boto3.resource("dynamodb", region_name=AWS_REGION)
 table = dynamodb.Table(TABLE_NAME)
 
+
+# -----------------------
+# UTILS
+# -----------------------
+
+def log(msg, *args):
+    """Imprime mensajes uniformes en CloudWatch"""
+    print(f"[DEBUG] {msg}", *args)
+
+def error_log(msg, *args):
+    """Imprime mensajes de error en CloudWatch"""
+    print(f"[ERROR] {msg}", *args)
+
+
 def parse_iso_z(s):
-    """Parse ISO Z string like '2025-01-01T00:00:00.000Z' into aware UTC datetime."""
     if not s:
         return None
     try:
-        # Python 3.11: fromisoformat doesn't accept Z, so replace with +00:00
         return datetime.fromisoformat(s.replace("Z", "+00:00"))
     except Exception:
-        try:
-            return datetime.strptime(s, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)
-        except Exception:
+        for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ"):
             try:
-                return datetime.strptime(s, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+                return datetime.strptime(s, fmt).replace(tzinfo=timezone.utc)
             except Exception:
-                return None
+                pass
+    return None
+
 
 def unir_fecha_hora(fecha_str, hora_str):
-    """
-    Une fecha (fecha_str: '2025-01-01T00:00:00.000Z') y hora
-    (hora_str: '1970-01-01T12:08:29.000Z' placeholder) en un único datetime UTC.
-    Devuelve ISO string (Z).
-    """
     fecha = parse_iso_z(fecha_str)
     hora = parse_iso_z(hora_str)
     if not fecha:
         return None
     if not hora:
-        # si no hay hora, devolver fecha tal cual
         return fecha.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
-    # sustituir hora/min/segundos de fecha por los de hora
     try:
-        nueva = fecha.replace(hour=hora.hour, minute=hora.minute, second=hora.second,
-                              microsecond=hora.microsecond)
+        nueva = fecha.replace(
+            hour=hora.hour,
+            minute=hora.minute,
+            second=hora.second,
+            microsecond=hora.microsecond
+        )
         return nueva.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
     except Exception:
         return fecha.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
+
 def safe_convert_numbers(item):
-    """
-    Convertir campos que deberían ser numéricos a Decimal (DynamoDB friendly).
-    Ajusta según las claves que esperes: magnitud, profundidad, latitud, longitud.
-    """
-    out = dict(item)  # shallow copy
-    # campos típicos
+    out = dict(item)
     for key in ("magnitud", "profundidad", "latitud", "longitud"):
-        if key in out and out[key] is not None and out[key] != "":
-            val = out[key]
-            # si es string que representa número, convertir
+        if key in out and out[key] not in (None, ""):
             try:
-                # tratar enteros y floats
+                val = out[key]
                 if isinstance(val, str):
-                    if "." in val:
-                        num = Decimal(val)
-                    else:
-                        # puede ser '4' -> Decimal('4')
-                        num = Decimal(val)
-                elif isinstance(val, (int, float, Decimal)):
-                    num = Decimal(str(val))
+                    out[key] = Decimal(val)
                 else:
-                    continue
-                out[key] = num
+                    out[key] = Decimal(str(val))
             except Exception:
-                # dejar tal cual si falla
-                out[key] = val
+                pass
     return out
 
+
 def limpiar_tabla():
-    """Eliminar todos los items de la tabla (scan + batch delete)."""
+    log("Limpiando tabla DynamoDB...")
     resp = table.scan()
     items = resp.get("Items", [])
+
+    total_deleted = 0
+
     while True:
         if not items:
             break
+
         with table.batch_writer() as batch:
             for it in items:
-                # asumimos que existe 'id' como clave primaria
                 if "id" in it:
                     batch.delete_item(Key={"id": it["id"]})
-                else:
-                    # Si la tabla tiene otra PK, ajusta aquí
-                    pass
-        # paginación
-        if 'LastEvaluatedKey' in resp:
-            resp = table.scan(ExclusiveStartKey=resp['LastEvaluatedKey'])
+                    total_deleted += 1
+
+        if "LastEvaluatedKey" in resp:
+            resp = table.scan(ExclusiveStartKey=resp["LastEvaluatedKey"])
             items = resp.get("Items", [])
         else:
             break
 
+    log(f"Tabla limpiada. Items eliminados: {total_deleted}")
+
+
 def insertar_items(items):
-    """Insertar items (lista de dict) usando batch_writer"""
+    log(f"Insertando {len(items)} items...")
     count = 0
     with table.batch_writer() as batch:
         for it in items:
             batch.put_item(Item=it)
             count += 1
+    log(f"Insertados correctamente: {count}")
     return count
+
 
 def obtener_sismos_por_anio(year):
     url = f"https://ultimosismo.igp.gob.pe/api/ultimo-sismo/ajaxb/{year}"
+    log(f"Solicitando datos al IGP para el año {year}...")
+
     try:
         r = requests.get(url, timeout=15)
-    except requests.RequestException as e:
+    except Exception as e:
+        error_log(f"Error de request para año {year}: {e}")
         return {"ok": False, "error": str(e), "items": []}
 
     if r.status_code == 200:
         try:
             data = r.json()
+            log(f"Datos obtenidos para {year}: {len(data)} items")
             return {"ok": True, "items": data}
         except Exception as e:
-            return {"ok": False, "error": f"JSON parse error: {e}", "items": []}
-    elif r.status_code == 404:
-        return {"ok": True, "items": []}  # no hay datos para ese año
-    else:
-        return {"ok": False, "error": f"HTTP {r.status_code}", "items": []}
+            error_log(f"JSON inválido para {year}: {e}")
+            return {"ok": False, "error": str(e), "items": []}
+
+    if r.status_code == 404:
+        log(f"IGP no tiene datos para el año {year}.")
+        return {"ok": True, "items": []}
+
+    error_log(f"Error HTTP {r.status_code} para año {year}")
+    return {"ok": False, "error": f"HTTP {r.status_code}", "items": []}
+
+
+# -----------------------
+# HANDLER PRINCIPAL
+# -----------------------
 
 def lambda_handler(event, context):
-    """
-    event puede contener:
-      - start_year: int
-      - end_year: int
-    También toma START_YEAR/END_YEAR de env vars si no vienen en event.
-    """
-    start = int(event.get("start_year", DEFAULT_START_YEAR))
-    end = int(event.get("end_year", DEFAULT_END_YEAR))
-    if end < start:
-        start, end = end, start
+    log("Evento recibido:", json.dumps(event))
 
-    resumen = {"years_processed": [], "total_inserted": 0, "errors": []}
-    all_items_to_insert = []
-
-    for y in range(start, end + 1):
-        resp = obtener_sismos_por_anio(y)
-        if not resp["ok"]:
-            resumen["errors"].append({"year": y, "error": resp.get("error")})
-            continue
-        items = resp["items"]
-        if not items:
-            # no hay datos para ese año, continuar
-            resumen["years_processed"].append({"year": y, "count": 0})
-            continue
-
-        processed = []
-        for rec in items:
-            # copiar para no mutar el original
-            r = dict(rec)
-
-            # crear id único si no viene
-            r.setdefault("id", str(uuid.uuid4()))
-
-            # unir fecha + hora
-            fecha_local = r.get("fecha_local")
-            hora_local = r.get("hora_local")
-            r["fecha_hora_local"] = unir_fecha_hora(fecha_local, hora_local)
-
-            # agregar timestamps de procesado
-            r["procesado_en"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-            # convertir campos numéricos a Decimal para DynamoDB
-            r = safe_convert_numbers(r)
-
-            processed.append(r)
-
-        all_items_to_insert.extend(processed)
-        resumen["years_processed"].append({"year": y, "count": len(processed)})
-
-    # Limpiar tabla antes de insertar
     try:
-        limpiar_tabla()
+        # Leer body si viene desde HTTP API
+        if isinstance(event, dict) and "body" in event and isinstance(event["body"], str):
+            try:
+                body = json.loads(event["body"])
+            except:
+                body = {}
+        else:
+            body = event or {}
+
+        start = int(body.get("start_year", DEFAULT_START_YEAR))
+        end = int(body.get("end_year", DEFAULT_END_YEAR))
+        if end < start:
+            start, end = end, start
+
+        log(f"Procesando desde {start} hasta {end}...")
+
+        resumen = {
+            "years_processed": [],
+            "total_inserted": 0,
+            "errors": []
+        }
+
+        all_items_to_insert = []
+
+        # Proceso año por año
+        for year in range(start, end + 1):
+            resp = obtener_sismos_por_anio(year)
+
+            if not resp["ok"]:
+                resumen["errors"].append({
+                    "year": year,
+                    "error": resp["error"]
+                })
+                continue
+
+            items = resp["items"]
+            processed = []
+
+            for rec in items:
+                r = dict(rec)
+                r.setdefault("id", str(uuid.uuid4()))
+
+                fecha_local = r.get("fecha_local")
+                hora_local = r.get("hora_local")
+                r["fecha_hora_local"] = unir_fecha_hora(fecha_local, hora_local)
+
+                r["procesado_en"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+                r = safe_convert_numbers(r)
+                processed.append(r)
+
+            resumen["years_processed"].append({
+                "year": year,
+                "count": len(processed)
+            })
+
+            all_items_to_insert.extend(processed)
+
+        # Limpiar tabla
+        try:
+            limpiar_tabla()
+        except Exception as e:
+            error_log("Error limpiando tabla:", e)
+            return http_error(f"Error limpiando tabla: {e}")
+
+        # Insertar items
+        try:
+            inserted = insertar_items(all_items_to_insert)
+            resumen["total_inserted"] = inserted
+        except Exception as e:
+            error_log("Error insertando items:", e)
+            return http_error(f"Error al insertar en DynamoDB: {e}")
+
+        log("Proceso finalizado correctamente.")
+        return http_ok(resumen)
+
     except Exception as e:
-        return {"statusCode": 500, "body": f"Error limpiando tabla: {e}"}
+        error_log("Excepción no manejada:", e)
+        return http_error(f"Error inesperado: {e}")
 
-    # Insertar
-    try:
-        inserted = insertar_items(all_items_to_insert)
-        resumen["total_inserted"] = inserted
-    except Exception as e:
-        return {"statusCode": 500, "body": f"Error al insertar en DynamoDB: {e}"}
 
-    return {"statusCode": 200, "body": resumen}
+# -----------------------
+# RESPUESTAS HTTP
+# -----------------------
 
+def http_ok(data):
+    return {
+        "statusCode": 200,
+        "headers": {"Content-Type": "application/json"},
+        "body": json.dumps(data, ensure_ascii=False)
+    }
+
+def http_error(msg):
+    return {
+        "statusCode": 500,
+        "headers": {"Content-Type": "application/json"},
+        "body": json.dumps({"error": msg}, ensure_ascii=False)
+    }
