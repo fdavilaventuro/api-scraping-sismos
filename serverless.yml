@@ -3,7 +3,7 @@ service: api-web-scraping
 
 provider:
   name: aws
-  runtime: python3.12
+  runtime: python3.10   # 👈 USAMOS LO QUE TIENES INSTALADO
   region: us-east-1
   memorySize: 1024
   timeout: 20
@@ -27,11 +27,14 @@ functions:
           path: /scrap
           method: post
 
+plugins:
+  - serverless-python-requirements
+
 custom:
   pythonRequirements:
     fileName: requirements.txt
-    dockerizePip: false   # 👈 SOLUCIÓN
-    usePoetry: false
+    pythonBin: python3   # 👈 MATCH CON TU SISTEMA (3.10)
+    dockerizePip: false  # 👈 SIN DOCKER
     useDownloadCache: false
     useStaticCache: false
 
