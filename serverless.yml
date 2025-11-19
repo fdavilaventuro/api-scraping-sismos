@@ -27,9 +27,6 @@ functions:
           path: /scrap
           method: post
 
-plugins:
-  - serverless-python-requirements
-
 custom:
   pythonRequirements:
     fileName: requirements.txt
@@ -51,3 +48,4 @@ resources:
         KeySchema:
           - AttributeName: id
             KeyType: HASH
+
