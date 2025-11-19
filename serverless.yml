@@ -1,33 +1,48 @@
-service: igp-sismos-scraper
 org: fabioedv
+service: api-web-scraping
 
 provider:
   name: aws
   runtime: python3.12
   region: us-east-1
-  stage: dev
   memorySize: 1024
   timeout: 20
-
   iam:
     role: arn:aws:iam::282163831899:role/LabRole
-
   environment:
-    TABLE_NAME: TablaWebScrapingSismos
+    TABLE_NAME: TablaWebScrapping
     START_YEAR: 2025
     END_YEAR: 2025
 
 functions:
-  scraper:
+  scrape_sismos:
     handler: handler.lambda_handler
+    description: "Scrapea los sismos desde el IGP y almacena en DynamoDB"
+    package:
+      include:
+        - handler.py
+        - requirements.txt
     events:
-      - http:
-          path: scrape
+      - httpApi:
+          path: /scrap
           method: post
-          cors: true
 
 custom:
   pythonRequirements:
-    dockerizePip: false     # ← DESACTIVADO
-    slim: false             # más seguro sin slim
-    strip: false
+    fileName: requirements.txt
+    dockerizePip: true
+    slim: true
+
+resources:
+  Resources:
+    TablaWebScrapping:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: TablaWebScrapping
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
