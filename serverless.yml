@@ -1,8 +1,6 @@
 service: igp-sismos-scraper
 org: fabioedv
 
-frameworkVersion: '3'
-
 provider:
   name: aws
   runtime: python3.12
@@ -37,3 +35,4 @@ custom:
     pythonBin: python3
     slim: true
     strip: false
+
